@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Etiket → Fatura Metni</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <style>
+    :root{
+      --bg:#f6f7f9;
+      --card:#ffffff;
+      --line:#d9dde3;
+      --text:#1e2329;
+      --muted:#66707c;
+      --primary:#2b2f36;
+      --soft:#eef1f4;
+      --ok:#0f7b43;
+      --warn:#9a6700;
+      --danger:#b42318;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,Arial,sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:1120px;margin:0 auto;padding:20px}
+    .hero,.card{background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:0 6px 20px rgba(16,24,40,.04)}
+    .hero{padding:20px;margin-bottom:16px}
+    h1{margin:0 0 8px;font-size:28px}
+    .sub{color:var(--muted);line-height:1.55}
+    .stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+    .pill{padding:8px 12px;border-radius:999px;background:var(--soft);font-size:13px;font-weight:700}
+    .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}
+    @media (max-width:900px){.grid{grid-template-columns:1fr}}
+    .card{padding:16px}
+    .section-title{margin:0 0 12px;font-size:18px}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    .field{flex:1 1 220px}
+    label{display:block;font-size:13px;font-weight:700;margin-bottom:6px;color:#344054}
+    input[type="text"],input[type="file"],textarea,input[type="number"]{
+      width:100%;padding:12px 13px;border:1px solid var(--line);border-radius:12px;background:#fff;font-size:15px;color:var(--text)
+    }
+    textarea{min-height:92px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    button{border:0;border-radius:12px;padding:12px 14px;background:var(--primary);color:#fff;font-size:14px;font-weight:700;cursor:pointer}
+    button.secondary{background:#fff;color:var(--text);border:1px solid var(--line)}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .status{padding:12px 14px;border-radius:12px;background:var(--soft);color:#334155;font-size:14px;line-height:1.45;margin-top:12px}
+    .status.ok{background:#ecfdf3;color:var(--ok)}
+    .status.warn{background:#fffaeb;color:var(--warn)}
+    .status.danger{background:#fef3f2;color:var(--danger)}
+    .preview-wrap{position:relative}
+    .preview{width:100%;max-height:560px;object-fit:contain;border:1px solid var(--line);border-radius:16px;background:#fff}
+    .hint{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5}
+    .mini{font-size:12px;color:var(--muted)}
+    .outputs{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+    @media (max-width:700px){.outputs{grid-template-columns:1fr}}
+    .outbox{border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff}
+    .outbox strong{display:block;font-size:12px;color:#475467;margin-bottom:6px}
+    .outbox .value{font-size:18px;font-weight:800;letter-spacing:.2px;min-height:26px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;word-break:break-word}
+    .tablewrap{overflow:auto;border:1px solid var(--line);border-radius:14px;background:#fff}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;font-size:14px;vertical-align:top}
+    th{background:#f9fafb;font-size:13px;color:#475467}
+    .advanced{margin-top:14px;border-top:1px dashed var(--line);padding-top:14px}
+    details summary{cursor:pointer;font-weight:700;color:#344054}
+    .thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
+    @media (max-width:700px){.thumbs{grid-template-columns:1fr}}
+    canvas.crop{width:100%;border:1px solid var(--line);border-radius:12px;background:#fff}
+    .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <h1>Etiket → Fatura Metni</h1>
+      <div class="sub">
+        Sadece <strong>REF</strong>, <strong>LOT</strong> ve <strong>tarih</strong> okunur. Ürün kodu okunmaz; otomatik olarak <strong>EBGO + REF + 1</strong> şeklinde üretilir.
+        Aynı yerleşimdeki BEGO etiketleri için bölgesel OCR kullanır.
+      </div>
+      <div class="stats">
+        <div class="pill">Okunan alan: REF + LOT + TARİH</div>
+        <div class="pill">Ürün kodu: otomatik</div>
+        <div class="pill">LOT başındaki 0 korunur</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2 class="section-title">1) Fotoğraf</h2>
+        <div class="row">
+          <div class="field">
+            <label>Kamera</label>
+            <input id="cameraInput" type="file" accept="image/*" capture="environment">
+          </div>
+          <div class="field">
+            <label>Galeriden seç</label>
+            <input id="galleryInput" type="file" accept="image/*">
+          </div>
+        </div>
+        <div class="actions">
+          <button id="processBtn">Otomatik Oku</button>
+          <button class="secondary" id="addBtn">Listeye Ekle</button>
+          <button class="secondary" id="clearBtn">Temizle</button>
+        </div>
+        <div id="status" class="status">Fotoğraf seçin. Aynı etiket düzeninde sistem otomatik okuyacaktır.</div>
+        <div class="preview-wrap">
+          <img id="preview" class="preview" alt="Önizleme" />
+        </div>
+        <div class="hint">
+          En iyi sonuç için: etiketi dik çekin, beyaz etiket alanı tam görünsün, bulanıklık ve gölge olmasın. Bu sürüm tüm etiketi değil, sabit alanları okur.
+        </div>
+
+        <div class="advanced">
+          <details>
+            <summary>Gelişmiş tanı alanları</summary>
+            <div class="thumbs">
+              <div>
+                <div class="mini">REF bölgesi</div>
+                <canvas id="refCanvas" class="crop" width="320" height="120"></canvas>
+              </div>
+              <div>
+                <div class="mini">LOT bölgesi</div>
+                <canvas id="lotCanvas" class="crop" width="320" height="120"></canvas>
+              </div>
+              <div>
+                <div class="mini">Tarih bölgesi</div>
+                <canvas id="dateCanvas" class="crop" width="320" height="120"></canvas>
+              </div>
+            </div>
+            <div class="row" style="margin-top:12px">
+              <div class="field">
+                <label>REF bölge eşiği</label>
+                <input id="thrRef" type="number" min="80" max="220" value="160">
+              </div>
+              <div class="field">
+                <label>LOT bölge eşiği</label>
+                <input id="thrLot" type="number" min="80" max="220" value="160">
+              </div>
+              <div class="field">
+                <label>Tarih bölge eşiği</label>
+                <input id="thrDate" type="number" min="80" max="220" value="170">
+              </div>
+            </div>
+            <div class="mini">Gerektiğinde eşikleri değiştirip tekrar okuyabilirsiniz.</div>
+          </details>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="section-title">2) Sonuç</h2>
+        <div class="outputs">
+          <div class="outbox"><strong>REF</strong><div class="value mono" id="refOut">—</div></div>
+          <div class="outbox"><strong>LOT</strong><div class="value mono" id="lotOut">—</div></div>
+          <div class="outbox"><strong>Tarih</strong><div class="value mono" id="dateOut">—</div></div>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <div class="field">
+            <label>REF</label>
+            <input id="refInput" type="text" placeholder="58372">
+          </div>
+          <div class="field">
+            <label>LOT</label>
+            <input id="lotInput" type="text" placeholder="093811">
+          </div>
+          <div class="field">
+            <label>Tarih</label>
+            <input id="dateInput" type="text" placeholder="20250424 veya 2025-04-24">
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label>Ürün Kodu</label>
+            <input id="productCode" type="text" readonly placeholder="EBGO + REF + 1">
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label>Fatura Metni</label>
+            <textarea id="invoiceText" placeholder="Otomatik oluşur"></textarea>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="copyBtn">Fatura Metnini Kopyala</button>
+          <button class="secondary" id="downloadBtn">Excel İndir</button>
+        </div>
+
+        <details class="advanced">
+          <summary>Ham OCR çıktıları</summary>
+          <div class="row" style="margin-top:10px">
+            <div class="field">
+              <label>REF OCR</label>
+              <textarea id="refRaw"></textarea>
+            </div>
+            <div class="field">
+              <label>LOT OCR</label>
+              <textarea id="lotRaw"></textarea>
+            </div>
+            <div class="field">
+              <label>Tarih OCR</label>
+              <textarea id="dateRaw"></textarea>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2 class="section-title">3) Kayıtlar</h2>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>REF</th>
+              <th>Ürün Kodu</th>
+              <th>LOT</th>
+              <th>Tarih</th>
+              <th>Fatura Metni</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+<script>
+const cameraInput = document.getElementById('cameraInput');
+const galleryInput = document.getElementById('galleryInput');
+const preview = document.getElementById('preview');
+const processBtn = document.getElementById('processBtn');
+const addBtn = document.getElementById('addBtn');
+const clearBtn = document.getElementById('clearBtn');
+const downloadBtn = document.getElementById('downloadBtn');
+const copyBtn = document.getElementById('copyBtn');
+const statusEl = document.getElementById('status');
+
+const refInput = document.getElementById('refInput');
+const lotInput = document.getElementById('lotInput');
+const dateInput = document.getElementById('dateInput');
+const productCodeEl = document.getElementById('productCode');
+const invoiceText = document.getElementById('invoiceText');
+
+const refOut = document.getElementById('refOut');
+const lotOut = document.getElementById('lotOut');
+const dateOut = document.getElementById('dateOut');
+
+const refRaw = document.getElementById('refRaw');
+const lotRaw = document.getElementById('lotRaw');
+const dateRaw = document.getElementById('dateRaw');
+const resultsBody = document.getElementById('resultsBody');
+
+const refCanvas = document.getElementById('refCanvas');
+const lotCanvas = document.getElementById('lotCanvas');
+const dateCanvas = document.getElementById('dateCanvas');
+
+const thrRefEl = document.getElementById('thrRef');
+const thrLotEl = document.getElementById('thrLot');
+const thrDateEl = document.getElementById('thrDate');
+
+let selectedFile = null;
+let worker = null;
+let rows = [];
+
+const REGIONS = {
+  // normalized positions inside whole image for common BEGO layout
+  ref:  { x: 0.10, y: 0.13, w: 0.28, h: 0.10 },
+  lot:  { x: 0.42, y: 0.13, w: 0.28, h: 0.10 },
+  date: { x: 0.18, y: 0.77, w: 0.28, h: 0.08 }
+};
+
+function setStatus(text, kind=''){
+  statusEl.className = 'status' + (kind ? ' ' + kind : '');
+  statusEl.textContent = text;
+}
+
+function fileChosen(file){
+  if(!file) return;
+  selectedFile = file;
+  preview.src = URL.createObjectURL(file);
+  setStatus('Fotoğraf seçildi. Otomatik okuma için “Otomatik Oku” butonuna basın.');
+}
+
+cameraInput.addEventListener('change', e => fileChosen(e.target.files[0]));
+galleryInput.addEventListener('change', e => fileChosen(e.target.files[0]));
+
+[refInput, lotInput, dateInput].forEach(el => el.addEventListener('input', rebuildOutputs));
+processBtn.addEventListener('click', processImage);
+addBtn.addEventListener('click', addRow);
+clearBtn.addEventListener('click', clearAll);
+downloadBtn.addEventListener('click', downloadExcel);
+copyBtn.addEventListener('click', copyInvoice);
+
+async function ensureWorker(){
+  if(worker) return worker;
+  worker = await Tesseract.createWorker('eng');
+  return worker;
+}
+
+function loadImageFromFile(file){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function createCanvas(w,h){
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  return c;
+}
+
+function drawRegion(srcImg, region, outCanvas, thresholdValue){
+  const sw = srcImg.width, sh = srcImg.height;
+  const sx = Math.max(0, Math.floor(sw * region.x));
+  const sy = Math.max(0, Math.floor(sh * region.y));
+  const sWidth = Math.max(1, Math.floor(sw * region.w));
+  const sHeight = Math.max(1, Math.floor(sh * region.h));
+
+  const scale = 3.4;
+  outCanvas.width = Math.floor(sWidth * scale);
+  outCanvas.height = Math.floor(sHeight * scale);
+
+  const ctx = outCanvas.getContext('2d');
+  ctx.clearRect(0,0,outCanvas.width,outCanvas.height);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0,0,outCanvas.width,outCanvas.height);
+  ctx.drawImage(srcImg, sx, sy, sWidth, sHeight, 0, 0, outCanvas.width, outCanvas.height);
+
+  // grayscale + threshold + sharpen-ish contrast
+  const imgData = ctx.getImageData(0,0,outCanvas.width,outCanvas.height);
+  const data = imgData.data;
+  for(let i=0;i<data.length;i+=4){
+    const gray = Math.round(data[i]*0.299 + data[i+1]*0.587 + data[i+2]*0.114);
+    const v = gray > thresholdValue ? 255 : 0;
+    data[i] = data[i+1] = data[i+2] = v;
+  }
+  ctx.putImageData(imgData,0,0);
+
+  return { sx, sy, sWidth, sHeight };
+}
+
+async function ocrCanvas(canvas, whitelist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-:/.$ '){
+  const wk = await ensureWorker();
+  await wk.setParameters({
+    tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK,
+    tessedit_char_whitelist: whitelist,
+    preserve_interword_spaces: '1'
+  });
+  const result = await wk.recognize(canvas);
+  return (result.data.text || '').trim();
+}
+
+function normalizeRaw(text){
+  return String(text || '')
+    .replace(/[|]/g,'I')
+    .replace(/[‘’]/g,"'")
+    .replace(/[“”]/g,'"')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+function parseRef(text){
+  const clean = normalizeRaw(text);
+  const m = clean.match(/REF\s*[: ]\s*(\d{4,8})/i) || clean.match(/\b(58\d{3})\b/);
+  return m ? m[1] : '';
+}
+
+function parseLot(text){
+  const clean = normalizeRaw(text);
+  const m = clean.match(/LOT\s*[: ]\s*([0-9A-Z]{4,12})/i) || clean.match(/\b(0\d{5,}|\d{6,})\b/);
+  return m ? String(m[1]).trim() : '';
+}
+
+function parseDate(text){
+  const clean = normalizeRaw(text);
+  const m = clean.match(/(20\d{2}[-\/.]\d{2}[-\/.]\d{2})/) || clean.match(/\b(20\d{6})\b/);
+  if(!m) return '';
+  return normalizeDate(m[1]);
+}
+
+function normalizeDate(v){
+  const t = String(v || '').trim();
+  const m = t.match(/(20\d{2})[-\/.]?(\d{2})[-\/.]?(\d{2})/);
+  return m ? `${m[1]}${m[2]}${m[3]}` : t.replace(/\D/g,'');
+}
+
+function rebuildOutputs(){
+  const ref = (refInput.value || '').trim();
+  const lot = (lotInput.value || '').trim();
+  const date = normalizeDate(dateInput.value);
+  dateInput.value = dateInput.value.trim() ? date : '';
+
+  refOut.textContent = ref || '—';
+  lotOut.textContent = lot || '—';
+  dateOut.textContent = date || '—';
+
+  productCodeEl.value = ref ? `EBGO${ref}1` : '';
+  invoiceText.value = (ref && lot && date)
+    ? `${ref} (UNO) EBGO${ref}1 (LNO)${lot} (SNO)(URT) ${date}`
+    : '';
+}
+
+async function processImage(){
+  if(!selectedFile){
+    setStatus('Önce fotoğraf seçin.', 'warn');
+    return;
+  }
+
+  processBtn.disabled = true;
+  setStatus('Etiket bölgesel olarak okunuyor...', '');
+
+  try{
+    const img = await loadImageFromFile(selectedFile);
+
+    drawRegion(img, REGIONS.ref, refCanvas, Number(thrRefEl.value || 160));
+    drawRegion(img, REGIONS.lot, lotCanvas, Number(thrLotEl.value || 160));
+    drawRegion(img, REGIONS.date, dateCanvas, Number(thrDateEl.value || 170));
+
+    setStatus('REF bölgesi okunuyor...');
+    const [rawRef, rawLot, rawDate] = await Promise.all([
+      ocrCanvas(refCanvas, '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz: '),
+      ocrCanvas(lotCanvas, '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz: '),
+      ocrCanvas(dateCanvas, '0123456789-/.'),
+    ]);
+
+    refRaw.value = rawRef;
+    lotRaw.value = rawLot;
+    dateRaw.value = rawDate;
+
+    const ref = parseRef(rawRef);
+    const lot = parseLot(rawLot);
+    const date = parseDate(rawDate);
+
+    refInput.value = ref;
+    lotInput.value = lot;
+    dateInput.value = date;
+    rebuildOutputs();
+
+    if(ref && lot && date){
+      setStatus('Okuma tamamlandı. REF, LOT ve tarih başarıyla bulundu.', 'ok');
+    } else {
+      const missing = [!ref && 'REF', !lot && 'LOT', !date && 'TARİH'].filter(Boolean).join(', ');
+      setStatus(`Bazı alanlar bulunamadı: ${missing}. Gelişmiş tanı alanındaki eşikleri değiştirip tekrar deneyin veya manuel düzeltin.`, 'warn');
+    }
+  } catch(err){
+    console.error(err);
+    setStatus('Okuma sırasında hata oluştu. Fotoğrafı daha net ve dik çekerek tekrar deneyin.', 'danger');
+  } finally {
+    processBtn.disabled = false;
+  }
+}
+
+function addRow(){
+  rebuildOutputs();
+  const ref = refInput.value.trim();
+  const lot = lotInput.value.trim();
+  const date = normalizeDate(dateInput.value);
+  const productCode = ref ? `EBGO${ref}1` : '';
+  const invoice = invoiceText.value.trim();
+
+  if(!ref || !lot || !date || !invoice){
+    setStatus('Listeye eklemek için REF, LOT ve tarih gerekli.', 'warn');
+    return;
+  }
+
+  rows.push({ ref, productCode, lot, date, invoice });
+  renderTable();
+  setStatus('Kayıt listeye eklendi.', 'ok');
+}
+
+function renderTable(){
+  resultsBody.innerHTML = '';
+  rows.forEach((row, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${i+1}</td>
+      <td>${escapeHtml(row.ref)}</td>
+      <td>${escapeHtml(row.productCode)}</td>
+      <td>${escapeHtml(row.lot)}</td>
+      <td>${escapeHtml(row.date)}</td>
+      <td>${escapeHtml(row.invoice)}</td>`;
+    resultsBody.appendChild(tr);
+  });
+}
+
+function escapeHtml(str){
+  return String(str ?? '')
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'",'&#39;');
+}
+
+async function copyInvoice(){
+  const text = invoiceText.value.trim();
+  if(!text){
+    setStatus('Kopyalanacak fatura metni yok.', 'warn');
+    return;
+  }
+  try{
+    await navigator.clipboard.writeText(text);
+    setStatus('Fatura metni panoya kopyalandı.', 'ok');
+  }catch{
+    setStatus('Kopyalama başarısız oldu.', 'danger');
+  }
+}
+
+function downloadExcel(){
+  if(!rows.length){
+    setStatus('İndirilecek kayıt yok.', 'warn');
+    return;
+  }
+  const data = rows.map((r,i)=>(
+    { No:i+1, REF:r.ref, 'Ürün Kodu':r.productCode, LOT:r.lot, Tarih:r.date, 'Fatura Metni':r.invoice }
+  ));
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Sonuc');
+  const d = new Date();
+  const fn = `etiket_sonuc_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.xlsx`;
+  XLSX.writeFile(wb, fn);
+  setStatus('Excel dosyası indirildi.', 'ok');
+}
+
+async function clearAll(){
+  cameraInput.value = '';
+  galleryInput.value = '';
+  selectedFile = null;
+  preview.src = '';
+  refInput.value = lotInput.value = dateInput.value = '';
+  productCodeEl.value = invoiceText.value = '';
+  refOut.textContent = lotOut.textContent = dateOut.textContent = '—';
+  refRaw.value = lotRaw.value = dateRaw.value = '';
+  [refCanvas, lotCanvas, dateCanvas].forEach(c => c.getContext('2d').clearRect(0,0,c.width,c.height));
+  setStatus('Temizlendi. Yeni fotoğraf seçebilirsiniz.');
+}
+
+rebuildOutputs();
+</script>
+</body>
+</html>
